@@ -1,0 +1,7 @@
+# Inventar b2b-romania-raw - 2026-10-29T19:13:38Z
+# format: data ora marime(octeti) cale
+2026-06-26 15:15:42  753076692 raw/mf/2026-06/romania_2026_06_26.csv
+2026-06-26 15:12:33          7 test/r2-test.txt
+# --- total ---
+Total Objects: 2
+   Total Size: 753076699
