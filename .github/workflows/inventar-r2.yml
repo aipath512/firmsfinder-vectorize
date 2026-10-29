@@ -37,4 +37,5 @@ jobs:
           git config user.email "contact@5thelement.ai"
           git add inventar-r2.txt
           git commit -m "inventar R2 $(date -u +%Y-%m-%d)" || echo "nimic de salvat"
+          git pull --rebase origin main
           git push
