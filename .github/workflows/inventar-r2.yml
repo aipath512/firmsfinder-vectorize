@@ -1,0 +1,40 @@
+name: Inventar R2 (listare fisiere b2b-romania-raw)
+
+# Rulare manuala, o singura data. Doar LISTEAZA fisierele din R2 (nu citeste date, nu costa).
+# Scrie rezultatul in inventar-r2.txt in repo.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  inventar:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Listeaza fisierele din b2b-romania-raw
+        run: |
+          {
+            echo "# Inventar b2b-romania-raw - $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "# format: data ora marime(octeti) cale"
+            aws s3 ls s3://b2b-romania-raw --recursive --endpoint-url "$R2_ENDPOINT"
+            echo "# --- total ---"
+            aws s3 ls s3://b2b-romania-raw --recursive --summarize --endpoint-url "$R2_ENDPOINT" | tail -n 2
+          } > inventar-r2.txt
+          cat inventar-r2.txt
+
+      - name: Salveaza inventarul in repo
+        run: |
+          git config user.name "inventar-r2"
+          git config user.email "contact@5thelement.ai"
+          git add inventar-r2.txt
+          git commit -m "inventar R2 $(date -u +%Y-%m-%d)" || echo "nimic de salvat"
+          git push
