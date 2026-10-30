@@ -1,0 +1,204 @@
+# ingestie-r2 v1.0 - 2026-10-30
+# ENT-00000007: SHA-256 pe fiecare fisier din raw/, manifest pe rulare, un singur OTS pe manifest.
+# Token R2: DOAR CITIRE (suficient). Robotul nu scrie in R2; manifestele si dovezile OTS se salveaza in acest repo (folderul manifest/).
+# Fisierele din R2 raman neatinse. Un fisier nou sau schimbat (alta marime sau alt ETag) primeste o intrare noua in registru; cele vechi se pastreaza.
+# Optional: lângă un fisier raw/x/y/z.csv se poate pune raw/x/y/z.csv.meta.json cu {"horodatarea_sursei":"2026-09-02","url_sursa":"https://..."}.
+# Fara acest fisier, horodatarea_sursei ramane null (nu se inventeaza).
+
+name: Ingestie R2 (SHA-256 + manifest + OTS)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ingestie:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      R2_BUCKET: b2b-romania-raw
+      R2_PREFIX: raw/
+      SESIUNE: "0008C"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instaleaza boto3 si clientul OpenTimestamps
+        run: pip install boto3 opentimestamps-client
+
+      - name: Calculeaza SHA-256, scrie manifestul, aplica OTS
+        run: |
+          python3 - <<'PY'
+          import boto3, hashlib, json, os, glob, subprocess, datetime
+          from botocore.config import Config
+
+          BUCKET = os.environ.get("R2_BUCKET", "b2b-romania-raw")
+          PREFIX = os.environ.get("R2_PREFIX", "raw/")
+          SESIUNE = os.environ.get("SESIUNE", "0008C")
+          ENDPOINT = os.environ["R2_ENDPOINT"]
+          REGISTRU = "manifest/registru.jsonl"
+          SUMAR = os.environ.get("GITHUB_STEP_SUMMARY")
+
+          os.makedirs("manifest", exist_ok=True)
+          s3 = boto3.client("s3", endpoint_url=ENDPOINT, region_name="auto",
+                            config=Config(retries={"max_attempts": 5, "mode": "standard"}))
+
+          def acum():
+              return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+          # 1. Registrul existent (cheie: cale + marime + etag)
+          cunoscute = set()
+          if os.path.exists(REGISTRU):
+              with open(REGISTRU, encoding="utf-8") as f:
+                  for linie in f:
+                      linie = linie.strip()
+                      if linie:
+                          r = json.loads(linie)
+                          cunoscute.add((r["cale"], r["marime"], r["etag"]))
+
+          # 2. Listeaza obiectele din raw/
+          obiecte = []
+          for pagina in s3.get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix=PREFIX):
+              for o in pagina.get("Contents", []):
+                  if o["Key"].endswith("/") or o["Size"] == 0:
+                      continue
+                  obiecte.append({
+                      "cale": o["Key"],
+                      "marime": o["Size"],
+                      "etag": o["ETag"].strip('"'),
+                      "intrat_in_r2": o["LastModified"].astimezone(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  })
+          chei = {o["cale"] for o in obiecte}
+          noi = [o for o in obiecte if (o["cale"], o["marime"], o["etag"]) not in cunoscute]
+          print(f"In R2 ({PREFIX}): {len(obiecte)} fisiere; noi sau schimbate: {len(noi)}")
+
+          def sha256_obiect(cale, marime):
+              h = hashlib.sha256()
+              n = 0
+              corp = s3.get_object(Bucket=BUCKET, Key=cale)["Body"]
+              for bloc in corp.iter_chunks(chunk_size=8 * 1024 * 1024):
+                  h.update(bloc)
+                  n += len(bloc)
+              if n != marime:
+                  raise RuntimeError(f"{cale}: citit {n} octeti, asteptat {marime}")
+              return h.hexdigest()
+
+          def meta_sidecar(cale):
+              k = cale + ".meta.json"
+              if k not in chei:
+                  return {}
+              try:
+                  return json.loads(s3.get_object(Bucket=BUCKET, Key=k)["Body"].read().decode("utf-8"))
+              except Exception as e:
+                  print(f"AVERTISMENT: {k} nu poate fi citit ca JSON: {e}")
+                  return {}
+
+          # 3. Intrari noi + manifest
+          manifest_nou = None
+          if noi:
+              ts = acum()
+              intrari = []
+              for o in noi:
+                  print("SHA-256:", o["cale"], o["marime"], "octeti ...", flush=True)
+                  parti = o["cale"][len(PREFIX):].split("/")
+                  meta = meta_sidecar(o["cale"])
+                  intrari.append({
+                      "tip_record": "INGESTIE_FISIER",
+                      "cale": o["cale"],
+                      "bucket": BUCKET,
+                      "marime": o["marime"],
+                      "etag": o["etag"],
+                      "sha256": sha256_obiect(o["cale"], o["marime"]),
+                      "sursa": parti[0] if len(parti) > 1 else None,
+                      "set": parti[1] if len(parti) > 2 else None,
+                      "horodatarea_sursei": meta.get("horodatarea_sursei"),
+                      "url_sursa": meta.get("url_sursa"),
+                      "intrat_in_r2": o["intrat_in_r2"],
+                      "sha256_calculat_la": acum(),
+                  })
+              nume = "manifest/manifest_" + ts.replace("-", "").replace(":", "") + ".json"
+              manifest = {
+                  "tip_record": "MANIFEST_INGESTIE",
+                  "regula": "ENT-00000007",
+                  "sesiune": SESIUNE,
+                  "sursa": "AiVenture S.R.L. - robot ingestie-r2 v1.0",
+                  "generat_la": ts,
+                  "bucket": BUCKET,
+                  "prefix": PREFIX,
+                  "numar_fisiere": len(intrari),
+                  "fisiere": intrari,
+              }
+              with open(nume, "w", encoding="utf-8") as f:
+                  json.dump(manifest, f, ensure_ascii=False, indent=2, sort_keys=True)
+                  f.write("\n")
+              with open(REGISTRU, "a", encoding="utf-8") as f:
+                  for i in intrari:
+                      f.write(json.dumps(dict(i, manifest=os.path.basename(nume)), ensure_ascii=False, sort_keys=True) + "\n")
+              manifest_nou = (nume, intrari)
+              print("Manifest scris:", nume)
+
+          # 4. OTS: stampileaza orice manifest fara .ots, apoi incearca upgrade pe toate
+          def ots(*args):
+              return subprocess.run(["ots", *args], capture_output=True, text=True)
+
+          manifeste = sorted(glob.glob("manifest/manifest_*.json"))
+          for m in manifeste:
+              if not os.path.exists(m + ".ots"):
+                  r = ots("stamp", m)
+                  print("ots stamp", m, "->", r.returncode, (r.stdout + r.stderr).strip()[:400])
+                  if r.returncode != 0:
+                      print("AVERTISMENT: nu s-a putut stampila acum; se reincearca la urmatoarea rulare.")
+
+          stari = []
+          for m in manifeste:
+              o = m + ".ots"
+              if not os.path.exists(o):
+                  stari.append((os.path.basename(m), "FARA .ots (reincercare la urmatoarea rulare)"))
+                  continue
+              ots("upgrade", o)
+              info = ots("info", o).stdout
+              confirmat = "BitcoinBlockHeaderAttestation" in info
+              stari.append((os.path.basename(m), "confirmat in Bitcoin" if confirmat else "in asteptare (se confirma in cateva ore)"))
+          for b in glob.glob("manifest/*.bak"):
+              os.remove(b)
+
+          # 5. Dispariții (informativ)
+          dispar = sorted({c for (c, _, _) in cunoscute} - chei)
+          if dispar:
+              print("ATENTIE: fisiere inregistrate dar absente acum din R2:", dispar)
+
+          # 6. Sumar
+          linii = ["## Ingestie R2", "", f"Fisiere in R2 sub `{PREFIX}`: **{len(obiecte)}**, noi sau schimbate: **{len(noi)}**", ""]
+          if manifest_nou:
+              linii += ["| Cale | Marime (octeti) | SHA-256 |", "|---|---|---|"]
+              for i in manifest_nou[1]:
+                  linii.append(f"| `{i['cale']}` | {i['marime']:,} | `{i['sha256']}` |")
+              linii.append("")
+          linii += ["### Stare OTS", "", "| Manifest | Stare |", "|---|---|"]
+          for n, s in stari:
+              linii.append(f"| `{n}` | {s} |")
+          if dispar:
+              linii += ["", "### Atentie: absente acum din R2", ""] + [f"- `{c}`" for c in dispar]
+          text = "\n".join(linii) + "\n"
+          print(text)
+          if SUMAR:
+              with open(SUMAR, "a", encoding="utf-8") as f:
+                  f.write(text)
+          PY
+
+      - name: Salveaza manifestele in repo
+        run: |
+          git config user.name "ingestie-r2"
+          git config user.email "contact@5thelement.ai"
+          git add manifest
+          git commit -m "ingestie R2 $(date -u +%Y-%m-%dT%H:%MZ)" || echo "nimic de salvat"
+          git pull --rebase origin main
+          git push
