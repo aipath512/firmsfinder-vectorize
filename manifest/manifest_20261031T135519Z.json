@@ -1,0 +1,40 @@
+{
+  "bucket": "b2b-romania-raw",
+  "fisiere": [
+    {
+      "bucket": "b2b-romania-raw",
+      "cale": "raw/anaf/2026-06/date_identificare_platitori_2026_a.txt",
+      "etag": "505d1f892ef5d49a714f7d5fc743048c-84",
+      "horodatarea_sursei": null,
+      "intrat_in_r2": "2026-10-31T13:48:40Z",
+      "marime": 435170869,
+      "set": "2026-06",
+      "sha256": "e69b1831ce9cf9695c7a2d733657b46066734f0ce252e50c97bb4ae8bae96115",
+      "sha256_calculat_la": "2026-10-31T13:55:35Z",
+      "sursa": "anaf",
+      "tip_record": "INGESTIE_FISIER",
+      "url_sursa": null
+    },
+    {
+      "bucket": "b2b-romania-raw",
+      "cale": "raw/anaf/2026-06/date_identificare_platitori_2026_b__actualizat_iulie.txt",
+      "etag": "76ffb3051d8f16bd76892820a179e0c0-86",
+      "horodatarea_sursei": null,
+      "intrat_in_r2": "2026-10-31T13:54:36Z",
+      "marime": 447033823,
+      "set": "2026-06",
+      "sha256": "c76ac03c8ef5fb2329863b60eb061a3cf63304e51f247e2f262485eacb6d36a6",
+      "sha256_calculat_la": "2026-10-31T13:55:50Z",
+      "sursa": "anaf",
+      "tip_record": "INGESTIE_FISIER",
+      "url_sursa": null
+    }
+  ],
+  "generat_la": "2026-10-31T13:55:19Z",
+  "numar_fisiere": 2,
+  "prefix": "raw/",
+  "regula": "ENT-00000007",
+  "sesiune": "0008C",
+  "sursa": "AiVenture S.R.L. - robot ingestie-r2 v1.0",
+  "tip_record": "MANIFEST_INGESTIE"
+}
